@@ -44,7 +44,7 @@ Main functionalities:
 - Clone repository into your local file system:
     
     ```bash
-    git clone https://github.com/telespazio-tim/cdse-copernicus-dem-downloader.git
+    git clone https://github.com/senbox-org/CDSE-Copernicus-DEM-downloader.git
     ```
 
 - External Copernicus Sentinel-2 tiling system KML file is required.
@@ -93,12 +93,62 @@ The help menu returns the available options. The software can be operated via co
 ```console
 python cdse_copernicus_dem_downloader.py --m DGED --r 90 --t 32UMA --o /Users/Sen2Cor/dem/CopernicusDEM90_DGED 
 ```
-
 This will retrieve  `(--m)` DGED-type DEM files at `(--r)` 90 m resolution that intersect the `(--t)` MGRS tile 32UMA and store them in the `(--o)` indicated output directory.
+
+Another example using a txt file that contains a list of MGRS tile identifiers or product filename (SAFE):
+```console
+S2A_MSIL1C_20240712T102601_N0510_R108_T32UMA_20240712T154912.SAFE # Frankfurt, Germany, SAFE format
+32UMA # Same as the first one but just the tile_id
+31TCJ # Toulouse, France
+32TNS
+32UME
+```
+```console
+python cdse_copernicus_dem_downloader.py --m DGED --r 90 --i /Users/…/input_tiles.txt --o /Users/…/Sen2Cor/dem/CopernicusDEM90_DGED  
+```
+This will retrieve  (--m) DGED type DEM files at (--r) 90 m resolution that intersect the MGRS tiles listed in the (--i) indicated file and store them in the (--o) indicated output directory.
+
+
+### Configuration file (xml)
+
+```console
+<?xml version="1.0" encoding="UTF-8"?>
+<DEM_DOWNLOADER_CONFIGURATION_FILE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="configuration.xsd">
+    <DEM_Option>
+        <!-- Collection, Resolution and Elevation Model will determine the server path for the DEM Retrieval-->
+        <!-- Default is COP-DEM-90-DGED-->
+        <Collection>COP-DEM</Collection>
+	<Resolution>90</Resolution>
+	<Elevation_Model>DGED</Elevation_Model>
+         <!-- Full path to the list of tiles. Tool’s input_tiles.txt is used if DEFAULT-->
+         <Tiles_Input_File>DEFAULT</Tiles_Input_File>
+        <!-- Full path to the Sen2Cor DEM Directory. Tool’s output_dir is used if DEFAULT-->
+        <DEM_Output_Directory>DEFAULT</DEM_Output_Directory>
+    </DEM_Option>
+</DEM_DOWNLOADER_CONFIGURATION_FILE>
+```
+Once the configuration file is filled with the preferred parameters, specify in the prompt the path of the configuration.xml:
+
+```console
+python cdse_copernicus_dem_downloader.py --config /user/…/configuration.xml
+```
+
+
+
+### Parameters priorities
+
+--config has the priority to the other options. If --config is specified within the command line, the other parameters are skipped.
+
+If –-config is not followed by the path of a configuration.xml file, the default configuration.xml file located in the /configuration directory is used.
+
+--t has priority on --i. 
+
+In case neither --t or –-i are specified, the default input_tile.txt located in the /configuration directory is used.
 
 A more complete CDSE DEM Downloader Quick User Guide is available at the following link: [Link Here]()
 
-Credentials. User is prompted to insert username and password (one time):
+### Credentials
+User is prompted to insert username and password (one time):
 
 ```console
 [log-info] Retrieval of public and private keys
