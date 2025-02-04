@@ -145,7 +145,7 @@ If –-config is not followed by the path of a configuration.xml file, the defau
 
 In case neither --t or –-i are specified, the default input_tile.txt located in the /configuration directory is used.
 
-A more complete CDSE DEM Downloader Quick User Guide is available at the following link: [Link Here]()
+A more complete CDSE DEM Downloader Quick User Guide is available at the following link: [Quick User Guide](https://step.esa.int/thirdparties/sen2cor/2.12.0/docs/CDSE_DEM_Downloader_v1_3.pdf)
 
 ### Credentials
 User is prompted to insert username and password (one time):
