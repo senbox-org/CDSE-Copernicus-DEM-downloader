@@ -49,7 +49,7 @@ Main functionalities:
 
 - External Copernicus Sentinel-2 tiling system KML file is required.
   -  Download the Copernicus Sentinel-2 tiling system KML file from the following link:
-[Copernicus Sentinel-2 KML](https://sentinel.esa.int/documents/247904/1955685/S2A_OPER_GIP_TILPAR_MPC__20151209T095117_V20150622T000000_21000101T000000_B00.kml);
+[Copernicus Sentinel-2 KML](https://sentiwiki.copernicus.eu/__attachments/1692737/S2A_OPER_GIP_TILPAR_MPC__20151209T095117_V20150622T000000_21000101T000000_B00.zip?inst-v=1dcdf0ad-f6da-4386-86fa-d8e5c1a6cc36);
   - Place the KML file in the following directory `./cdse-copernicus-dem-downloader/auxiliary`;
 
 - For the installation of prerequisite dependencies you need to create a dedicated conda environment.
