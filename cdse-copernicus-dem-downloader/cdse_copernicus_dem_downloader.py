@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright (c) 2024
+# Copyright (c) 2026
 #
 # Authors:
 # Sen2Cor_dev_team (Telespazio)
@@ -62,6 +62,13 @@ class DemDownloaderException(Exception):
     pass
 
 
+KML_DOWNLOAD_URL = (
+    "https://sentiwiki.copernicus.eu/__attachments/"
+    "a_69a662aa1cb30487acc66009f09b1dcfa9e4e32f92af1c3b2dd1fc8a3c011738/"
+    "S2A_OPER_GIP_TILPAR_MPC__20151209T095117_V20150622T000000_21000101T000000_B00.zip"
+)
+
+
 class DemDownloader:
     def __init__(self):
         self.lon_max = 0
@@ -74,8 +81,9 @@ class DemDownloader:
         self.cfg_file = "configuration.xml"
         self.input_file = "input_tiles.txt"
         self.dem_resolution = "90"
-        self.dem_collection = "COP-DEM"
+        self.dem_collection = "CCM"
         self.dem_format = "DGED"
+        self.dem_delivery_id = "2024_1"
         self.dem_search_url = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products?$filter="  # the main URL for the DEM retrieval
         self.home_directory = pathlib.Path(__file__).parent.resolve()
         self.dem_directory = os.path.join(self.home_directory, "output_dir")
@@ -96,8 +104,8 @@ class DemDownloader:
         self.dict_filename_dem_id = {}
         self.region = False
 
-        self.version_tool = 1.0
-        self.version_date = "10-October-2024"
+        self.version_tool = 1.1
+        self.version_date = "28-July-2026"
         self.tool_info = (
             "DEM Downloader "
             + "Version: "
@@ -187,6 +195,26 @@ class DemDownloader:
         session.headers.update(headers)
         response = session.get(dwn_url, headers=headers, stream=True)
 
+        if response.status_code == 403:
+            try:
+                error_body = response.json()
+            except ValueError:
+                error_body = {}
+            if error_body.get("code") == "DAT-ZIP-608":
+                raise DemDownloaderException(
+                    "CDSE refused the download (403 DAT-ZIP-608: Access forbidden).\n\n"
+                    "To download Copernicus Contributing Missions (CCM) data, users must "
+                    "update their Copernicus Data Space Ecosystem (CDSE) user profile by:\n"
+                    '- enabling the option "I am also interested in accessing Copernicus '
+                    'Contributing Missions data";\n'
+                    '- ticking "Accept ESA-User license for the use of CCM data and CCM '
+                    'Data Access Restrictions".'
+                )
+
+            raise DemDownloaderException(
+                f"CDSE refused the download of {dem} (HTTP 403): {error_body or response.text}"
+            )
+
         if not os.path.exists(self.dem_directory):
             log.warning("%s does not exist and it will be created", self.dem_directory)
             os.makedirs(self.dem_directory)
@@ -230,6 +258,43 @@ class DemDownloader:
 
         return False
 
+    def ensure_kml_file(self):
+
+        kml_path = os.path.join(self.aux_directory, self.kml_file)
+        if os.path.isfile(kml_path):
+            return kml_path
+
+        log.warning("Sentinel-2 tiling system KML file not found: %s", kml_path)
+        log.info("Attempting automatic download from %s", KML_DOWNLOAD_URL)
+
+        try:
+            response = requests.get(KML_DOWNLOAD_URL, timeout=(30.0, 60.0))
+            response.raise_for_status()
+
+            os.makedirs(self.aux_directory, exist_ok=True)
+            zip_path = os.path.join(self.aux_directory, "s2_tiling_kml.zip")
+            with open(zip_path, "wb") as zip_file:
+                zip_file.write(response.content)
+
+            with ZipFile(zip_path) as archive:
+                kml_members = [name for name in archive.namelist() if name.lower().endswith(".kml")]
+                if not kml_members:
+                    raise DemDownloaderException("downloaded archive contains no KML file")
+                with archive.open(kml_members[0]) as source, open(kml_path, "wb") as target:
+                    shutil.copyfileobj(source, target)
+
+            os.remove(zip_path)
+            log.info("Sentinel-2 tiling system KML file downloaded and saved to %s", kml_path)
+            return kml_path
+
+        except Exception as download_error:
+            raise DemDownloaderException(
+                f"Sentinel-2 tiling system KML file is missing ({kml_path}) and automatic "
+                f"download failed ({download_error}). Please download it manually from "
+                f"{KML_DOWNLOAD_URL}, unzip it, and place the .kml file in "
+                f"{self.aux_directory}, then retry."
+            ) from download_error
+
     def retrieve_multipolygon(self, sentinel_2_tile, tile_id):
 
         with open(sentinel_2_tile, "r", encoding="utf-8") as f:
@@ -256,22 +321,12 @@ class DemDownloader:
 
     def create_url(self):
 
-        dem_url_model = "DGE" if self.dem_format == "DGED" else "DTE"
-        product_type = dem_url_model + "_" + self.dem_resolution
+        dataset = f"COP-DEM_GLO-{self.dem_resolution}-{self.dem_format}/{self.dem_delivery_id}"  #e.g. "COP-DEM_GLO-30-DGED"
         collection_req = f"Collection/Name eq '{self.dem_collection}'"
-        product_type_req = f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'productType' and att/OData.CSC.StringAttribute/Value eq '{product_type}')"
+        dataset_req = f"Attributes/OData.CSC.StringAttribute/any(att:att/Name eq 'dataset' and att/OData.CSC.StringAttribute/Value eq '{dataset}')"
         polygon_req = f"OData.CSC.Intersects(area=geography'SRID=4326;POLYGON(({self.polygon}))')"
         max_n_items = "$top=100"  # default 20
-        url = f"{self.dem_search_url}{collection_req} and {product_type_req} and {polygon_req}&{max_n_items}"
-        # url = (
-        #     self.dem_search_url
-        #     + collection_req
-        #     + " and "
-        #     + product_type_req
-        #     + " and "
-        #     + polygon_req
-        #     + max_n_items
-        # )
+        url = f"{self.dem_search_url}{collection_req} and {dataset_req} and {polygon_req}&{max_n_items}"
         log.info("URL for Request created")
 
         return url
@@ -293,13 +348,13 @@ class DemDownloader:
 
     def reading_arguments(self, arguments):
 
-        self.dem_resolution = arguments.r if arguments.r is not None else self.dem_resolution
-        self.dem_format = arguments.m if arguments.m is not None else self.dem_format
-        self.dem_directory = arguments.o if arguments.o is not None else self.dem_directory
-        if arguments.t:
-            self.tiles_id_list = self.if_safe([arguments.t])
-        elif arguments.i:
-            self.input_tile_file = arguments.i
+        self.dem_resolution = arguments.resolution if arguments.resolution is not None else self.dem_resolution
+        self.dem_format = arguments.model if arguments.model is not None else self.dem_format
+        self.dem_directory = arguments.output if arguments.output is not None else self.dem_directory
+        if arguments.tile:
+            self.tiles_id_list = self.if_safe([arguments.tile])
+        elif arguments.input:
+            self.input_tile_file = arguments.input
             self.tiles_id_list = self.read_input_tile_list(self.input_tile_file)
         else:
             log.warning("Default Tool Input_Tiles file will be used: input_tiles.txt")
@@ -317,14 +372,16 @@ class DemDownloader:
                     root.DEM_Option.Resolution == "DEFAULT"
                     or root.DEM_Option.Collection == "DEFAULT"
                     or root.DEM_Option.Elevation_Model == "DEFAULT"
+                    or root.DEM_Option.Delivery_Id == "DEFAULT"
                 ):
                     log.warning(
-                        "At least one between dem_collection, dem_format, dem_resolution is NONE"
+                        "At least one between dem_collection, dem_format, dem_resolution, dem_delivery_id is NONE"
                     )
-                    log.warning("Default COP-DEM DGED 90 will be used")
+                    log.warning("Default COP-DEM_GLO-30-DGED/2024_1 will be used")
                 else:
                     self.dem_resolution = str(root.DEM_Option.Resolution)
                     self.dem_collection = str(root.DEM_Option.Collection)
+                    self.dem_delivery_id = str(root.DEM_Option.Delivery_Id)
                     self.dem_format = str(root.DEM_Option.Elevation_Model)
                 if root.DEM_Option.Tiles_Input_File != "DEFAULT":
                     self.input_tile_file = str(root.DEM_Option.Tiles_Input_File)
@@ -383,23 +440,56 @@ def main(argv: list[str]) -> int:
         const="Default",
     )
     arg_parser.add_argument(
-        "--r", type=str, choices=["30", "90"], help="set the (r)esolution of the DEM: 30 or 90 (m)"
+        "-r",
+        "--resolution",
+        type=str,
+        choices=["30", "90"],
+        help="Set the (r)esolution of the DEM: 30 or 90 (m)",
     )
     arg_parser.add_argument(
-        "--m", choices=["DTED", "DGED"], help="set the (m)odel of the DEM: DTED or DGED"
+        "-m",
+        "--model",
+        choices=["DTED", "DGED"],
+        help="Set the (m)odel of the DEM: DTED or DGED",
     )
     arg_parser.add_argument(
-        "--o",
-        help=r"set the (o)utput directory for storing the DEM. If blank, store into the Tool's Output_Dir",
+        "-d",
+        "--delivery_id",
+        choices=[
+            "2019_1",
+            "2019_2",
+            "2020_1",
+            "2020_2",
+            "2021_1",
+            "2021_2",
+            "2022_1",
+            "2023_1",
+            "2024_1",
+        ],
+        help="Set the (d)elivery_id of the DEM: 2019_1, 2019_2, 2020_1, 2020_2, "
+             "2021_1, 2021_2, 2022_1, 2023_1, 2024_1",
     )
     arg_parser.add_argument(
-        "--i",
-        help=r"set the path for the (i)nput file containing the tiles list. If blank, read from the Tool's configuration/input_tiles.txt",
+        "-o",
+        "--output",
+        help=r"Set the (o)utput directory for storing the DEM. If blank, store into the Tool's Output_Dir",
     )
     arg_parser.add_argument(
-        "--t", help="specify a single required MGRS (t)ile. e.g. 32UMA or Product (SAFE)"
+        "-i",
+        "--input",
+        help=r"Set the path for the (i)nput file containing the tiles list. If blank, read from the Tool's configuration/input_tiles.txt",
     )
-    arg_parser.add_argument("--reset", help="reset credentials", nargs="?", const="RESET")
+    arg_parser.add_argument(
+        "-t",
+        "--tile",
+        help="Specify a single required MGRS (t)ile. e.g. 32UMA or Product (SAFE)",
+    )
+    arg_parser.add_argument(
+        "--reset",
+        help="Reset credentials",
+        nargs="?",
+        const="RESET",
+    )
 
     args = arg_parser.parse_args()
 
@@ -423,7 +513,11 @@ def main(argv: list[str]) -> int:
         log.info("Credentials --reset process will stop")
         return 0
 
-    sentinel2_tiles_list = os.path.join(dem_downloader.aux_directory, dem_downloader.kml_file)
+    try:
+        sentinel2_tiles_list = dem_downloader.ensure_kml_file()
+    except DemDownloaderException as kml_error:
+        log.error(str(kml_error))
+        return 1
 
     if args.config:
         if args.config != "Default":
@@ -572,6 +666,10 @@ def main(argv: list[str]) -> int:
                         else:
                             try:
                                 dem_downloader.downloading_dem(dem_id, access_token)
+                            except DemDownloaderException as download_error:
+                                log.error(str(download_error))
+                                log.warning("Process will stop")
+                                return 1
                             except:
                                 log.warning(
                                     "Your access token looks invalid, please check and reset your Credentials"
@@ -580,7 +678,18 @@ def main(argv: list[str]) -> int:
                                 return 1
 
                     else:
-                        dem_downloader.downloading_dem(dem_id, access_token)
+                        try:
+                            dem_downloader.downloading_dem(dem_id, access_token)
+                        except DemDownloaderException as download_error:
+                            log.error(str(download_error))
+                            log.warning("Process will stop")
+                            return 1
+                        except:
+                            log.warning(
+                                "Your access token looks invalid, please check and reset your Credentials"
+                            )
+                            log.warning("Process will stop")
+                            return 1
 
             else:
                 log.warning("NO DEM available for Tile %s", tile_id)

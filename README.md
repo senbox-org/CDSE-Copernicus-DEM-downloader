@@ -16,10 +16,16 @@ Main functionalities:
 
 ### Prerequisites
 
-- A valid CDSE user account is required from https://dataspace.copernicus.eu/
-- Login credentials are:
+- A valid CDSE user account is required. Register at https://dataspace.copernicus.eu/.
+- Login credentials consist of:
   - username (email address)
   - password
+- To download Copernicus DEM, part of the Copernicus Contributing Missions (CCM) data, users must update their Copernicus Data Space Ecosystem (CDSE) user profile by:
+  - enabling the option **"I am also interested in accessing Copernicus Contributing Missions data"**;
+  - User Category: Public;
+  - ticking **"Accept ESA-User license for the use of CCM data and CCM Data Access Restrictions"**.
+  - the access to CCM datasets is usually granted within few hours
+- These profile settings must be completed before Copernicus Contributing Missions (CCM) data can be downloaded.
 
 ### Privacy Handling
 
@@ -49,7 +55,7 @@ Main functionalities:
 
 - External Copernicus Sentinel-2 tiling system KML file is required.
   - Download the Copernicus Sentinel-2 tiling system KML file from the following link:
-[Copernicus Sentinel-2 KML](https://sentiwiki.copernicus.eu/__attachments/1692737/S2A_OPER_GIP_TILPAR_MPC__20151209T095117_V20150622T000000_21000101T000000_B00.zip);
+[Copernicus Sentinel-2 KML](https://sentiwiki.copernicus.eu/__attachments/a_69a662aa1cb30487acc66009f09b1dcfa9e4e32f92af1c3b2dd1fc8a3c011738/S2A_OPER_GIP_TILPAR_MPC__20151209T095117_V20150622T000000_21000101T000000_B00.zip);
   - Unzip and place the KML file in the following directory `./cdse-copernicus-dem-downloader/auxiliary`;
 
 - For the installation of prerequisite dependencies you need to create a dedicated conda environment.
@@ -75,25 +81,33 @@ python cdse_copernicus_dem_downloader.py --help
 The help menu is visualised:
 
 ```console
-DEM Downloader Version: 1.0 Release Date: 10-October-2024.
+DEM Downloader Version: 1.1 Release Date: 28-July-2026.
+
 options:
-  -h, --help         show this help message and exit
-  --config [CONFIG]  set the path to the Config file. If blank, read the parameters from the configuration/configuration.xml
-  --r {30,90}        set the (r)esolution of the DEM: 30 or 90 (m)
-  --m {DTED,DGED}    set the (m)odel of the DEM: DTED or DGED
-  --o O              set the (o)utput directory for storing the DEM. If blank, store into the Tool's Output_Dir
-  --i I              set the path for the (i)nput file containing the tiles list. If blank, read from the Tool's configuration/input_tiles.txt
-  --t T              specify a single required MGRS (t)ile. e.g. 32UMA or Product (SAFE)
-  --reset [RESET]    reset credentials
+  -h, --help            show this help message and exit
+  --config [CONFIG]     set the path to the Config file. If blank, read the parameters from the configuration/configuration.xml
+  -r {30,90}, --resolution {30,90}
+                        Set the (r)esolution of the DEM: 30 or 90 (m)
+  -m {DTED,DGED}, --model {DTED,DGED}
+                        Set the (m)odel of the DEM: DTED or DGED
+  -d {2019_1,2019_2,2020_1,2020_2,2021_1,2021_2,2022_1,2023_1,2024_1}, --delivery_id {2019_1,2019_2,2020_1,2020_2,2021_1,2021_2,2022_1,2023_1,2024_1}
+                        Set the (d)elivery_id of the DEM: 2019_1, 2019_2, 2020_1, 2020_2, 2021_1, 2021_2, 2022_1, 2023_1, 2024_1
+  -o OUTPUT, --output OUTPUT
+                        Set the (o)utput directory for storing the DEM. If blank, store into the Tool's Output_Dir
+  -i INPUT, --input INPUT
+                        Set the path for the (i)nput file containing the tiles list. If blank, read from the Tool's configuration/input_tiles.txt
+  -t TILE, --tile TILE  Specify a single required MGRS (t)ile. e.g. 32UMA or Product (SAFE)
+  --reset [RESET]       Reset credentials
+
 ```
 
 The help menu returns the available options. The software can be operated via command line, or by filling the `configuration.xml`
  with the desired parameters. An example of a query using a command line is the following:
 
 ```console
-python cdse_copernicus_dem_downloader.py --m DGED --r 90 --t 32UMA --o /Users/Sen2Cor/dem/CopernicusDEM90_DGED 
+python cdse_copernicus_dem_downloader.py -m DGED -r 90 -t 32UMA -o /Users/Sen2Cor/dem/CopernicusDEM90_DGED 
 ```
-This will retrieve  `(--m)` DGED-type DEM files at `(--r)` 90 m resolution that intersect the `(--t)` MGRS tile 32UMA and store them in the `(--o)` indicated output directory.
+This will retrieve  `(-m)` DGED-type DEM files at `(-r)` 90 m resolution that intersect the `(-t)` MGRS tile 32UMA and store them in the `(-o)` indicated output directory.
 
 Another example using a txt file that contains a list of MGRS tile identifiers or product filename (SAFE):
 ```console
@@ -104,9 +118,9 @@ S2A_MSIL1C_20240712T102601_N0510_R108_T32UMA_20240712T154912.SAFE # Frankfurt, G
 32UME
 ```
 ```console
-python cdse_copernicus_dem_downloader.py --m DGED --r 90 --i /Users/…/input_tiles.txt --o /Users/…/Sen2Cor/dem/CopernicusDEM90_DGED  
+python cdse_copernicus_dem_downloader.py -m DGED -r 90 -i /Users/…/input_tiles.txt -o /Users/…/Sen2Cor/dem/CopernicusDEM90_DGED  
 ```
-This will retrieve  (--m) DGED type DEM files at (--r) 90 m resolution that intersect the MGRS tiles listed in the (--i) indicated file and store them in the (--o) indicated output directory.
+This will retrieve  (-m) DGED type DEM files at (-r) 90 m resolution that intersect the MGRS tiles listed in the (-i) indicated file and store them in the (-o) indicated output directory.
 
 
 ### Configuration file (xml)
@@ -117,12 +131,13 @@ This will retrieve  (--m) DGED type DEM files at (--r) 90 m resolution that inte
     <DEM_Option>
         <!-- Collection, Resolution and Elevation Model will determine the server path for the DEM Retrieval-->
         <!-- Default is COP-DEM-90-DGED-->
-        <Collection>COP-DEM</Collection>
-	<Resolution>90</Resolution>
-	<Elevation_Model>DGED</Elevation_Model>
-         <!-- Full path to the list of tiles. Tool’s input_tiles.txt is used if DEFAULT-->
+        <Collection>CCM</Collection>
+        <Delivery_Id>2024_1</Delivery_Id>
+        <Resolution>90</Resolution>
+        <Elevation_Model>DGED</Elevation_Model>
+         <!-- Full path to the list of tiles. Tool's Input_Tiles.txt is used if DEFAULT-->
          <Tiles_Input_File>DEFAULT</Tiles_Input_File>
-        <!-- Full path to the Sen2Cor DEM Directory. Tool’s output_dir is used if DEFAULT-->
+        <!-- Full path to the Sen2Cor DEM Directory. Tool's Output_Dir is used if DEFAULT-->
         <DEM_Output_Directory>DEFAULT</DEM_Output_Directory>
     </DEM_Option>
 </DEM_DOWNLOADER_CONFIGURATION_FILE>
@@ -133,17 +148,15 @@ Once the configuration file is filled with the preferred parameters, specify in 
 python cdse_copernicus_dem_downloader.py --config /user/…/configuration.xml
 ```
 
-
-
 ### Parameters priorities
 
 --config has the priority to the other options. If --config is specified within the command line, the other parameters are skipped.
 
 If –-config is not followed by the path of a configuration.xml file, the default configuration.xml file located in the /configuration directory is used.
 
---t has priority on --i. 
+-t has priority on -i. 
 
-In case neither --t or –-i are specified, the default input_tile.txt located in the /configuration directory is used.
+In case neither -t or -i are specified, the default input_tile.txt located in the /configuration directory is used.
 
 A more complete CDSE DEM Downloader Quick User Guide is available at the following link: [Quick User Guide](https://step.esa.int/thirdparties/sen2cor/2.12.0/docs/CDSE_DEM_Downloader_v1_3.pdf)
 
@@ -160,7 +173,7 @@ Re-enter your password:
 
 ## Important Note for Sen2Cor Users
 
-Sen2Cor Toolbox v2.12.03 (and previous versions) supports CDSE-DGED DEM types. CDSE-DTED DEM types are not supported. 
+Sen2Cor Toolbox v2.12.04 (and previous versions) supports CDSE-DGED DEM types. CDSE-DTED DEM types are not supported. 
 
 ## Useful Links
 

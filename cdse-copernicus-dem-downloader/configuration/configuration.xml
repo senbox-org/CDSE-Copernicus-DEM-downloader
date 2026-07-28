@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <DEM_DOWNLOADER_CONFIGURATION_FILE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="configuration.xsd">
     <DEM_Option>
+        <!-- Collection, Resolution and Elevation Model will determine the server path for the DEM Retrieval-->
         <!-- Default is COP-DEM-90-DGED-->
-        <!-- Collection, Resolution and Elevation_Model will determine the url for the DEM Retrieval-->
+        <Collection>CCM</Collection>
+        <Delivery_Id>2024_1</Delivery_Id>
         <Resolution>90</Resolution>
-        <Collection>COP-DEM</Collection>
         <Elevation_Model>DGED</Elevation_Model>
          <!-- Full path to the list of tiles. Tool's Input_Tiles.txt is used if DEFAULT-->
          <Tiles_Input_File>DEFAULT</Tiles_Input_File>
