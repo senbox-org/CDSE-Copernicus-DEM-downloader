@@ -48,7 +48,7 @@ Main functionalities:
 - Python >=3.12 is supported.
 
 - Clone repository into your local file system:
-    
+
     ```bash
     git clone https://github.com/senbox-org/CDSE-Copernicus-DEM-downloader.git
     ```
@@ -65,7 +65,7 @@ Main functionalities:
   conda env create -f environment.yml
   ```
 
-- The cdse-copernicus-dem-downloader env is activated with: 
+- The cdse-copernicus-dem-downloader env is activated with:
 
     ```bash
     conda activate cdse-copernicus-dem-downloader
@@ -105,7 +105,7 @@ The help menu returns the available options. The software can be operated via co
  with the desired parameters. An example of a query using a command line is the following:
 
 ```console
-python cdse_copernicus_dem_downloader.py -m DGED -r 90 -t 32UMA -o /Users/Sen2Cor/dem/CopernicusDEM90_DGED 
+python cdse_copernicus_dem_downloader.py -m DGED -r 90 -t 32UMA -o /Users/Sen2Cor/dem/CopernicusDEM90_DGED
 ```
 This will retrieve  `(-m)` DGED-type DEM files at `(-r)` 90 m resolution that intersect the `(-t)` MGRS tile 32UMA and store them in the `(-o)` indicated output directory.
 
@@ -118,7 +118,7 @@ S2A_MSIL1C_20240712T102601_N0510_R108_T32UMA_20240712T154912.SAFE # Frankfurt, G
 32UME
 ```
 ```console
-python cdse_copernicus_dem_downloader.py -m DGED -r 90 -i /Users/…/input_tiles.txt -o /Users/…/Sen2Cor/dem/CopernicusDEM90_DGED  
+python cdse_copernicus_dem_downloader.py -m DGED -r 90 -i /Users/…/input_tiles.txt -o /Users/…/Sen2Cor/dem/CopernicusDEM90_DGED
 ```
 This will retrieve  (-m) DGED type DEM files at (-r) 90 m resolution that intersect the MGRS tiles listed in the (-i) indicated file and store them in the (-o) indicated output directory.
 
@@ -154,7 +154,7 @@ python cdse_copernicus_dem_downloader.py --config /user/…/configuration.xml
 
 If –-config is not followed by the path of a configuration.xml file, the default configuration.xml file located in the /configuration directory is used.
 
--t has priority on -i. 
+-t has priority on -i.
 
 In case neither -t or -i are specified, the default input_tile.txt located in the /configuration directory is used.
 
@@ -173,7 +173,7 @@ Re-enter your password:
 
 ## Important Note for Sen2Cor Users
 
-Sen2Cor Toolbox v2.12.04 (and previous versions) supports CDSE-DGED DEM types. CDSE-DTED DEM types are not supported. 
+Sen2Cor Toolbox v2.12.04 (and previous versions) supports CDSE-DGED DEM types. CDSE-DTED DEM types are not supported.
 
 ## Useful Links
 
