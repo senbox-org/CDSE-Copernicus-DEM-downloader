@@ -99,7 +99,10 @@ class DemDownloader:
         self.polygon = []
         self.shape_polygon = []
         self.tile_coordinates = []
-        self.processed_dem_id_file = []
+        self.processed_dem_id_file = set()
+        self.kml_placemarks = {}
+        self.session = requests.Session()
+        self.catalogue_cache = {}
         self.dict_filename_dem_id_file = "dict_filename_dem_id.json"
         self.dict_filename_dem_id = {}
         self.region = False
@@ -177,7 +180,7 @@ class DemDownloader:
                     with source, target:
                         shutil.copyfileobj(source, target)
                         log.info("DEM %s extracted and stored", filename)
-                        self.processed_dem_id_file.append(dem_id)
+                        self.processed_dem_id_file.add(dem_id)
                         self.dict_filename_dem_id[filename] = dem_id
         try:
             os.remove(dem_file)
@@ -187,53 +190,41 @@ class DemDownloader:
         return
 
     def downloading_dem(self, dem, access_token):
-
         dwn_url = f"https://zipper.dataspace.copernicus.eu/odata/v1/Products({dem})/$value"
         headers = {"Authorization": f"Bearer {access_token}"}
 
-        session = requests.Session()
-        session.headers.update(headers)
-        response = session.get(dwn_url, headers=headers, stream=True)
-
-        if response.status_code == 403:
-            try:
-                error_body = response.json()
-            except ValueError:
-                error_body = {}
-            if error_body.get("code") == "DAT-ZIP-608":
+        with self.session.get(dwn_url, headers=headers, stream=True, timeout=(30, 300)) as response:
+            if response.status_code == 403:
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    error_body = {}
+                if error_body.get("code") == "DAT-ZIP-608":
+                    raise DemDownloaderException(
+                        "CDSE refused the download (403 DAT-ZIP-608: Access forbidden).\n\n"
+                        "To download Copernicus Contributing Missions (CCM) data, users must "
+                        "update their CDSE user profile by enabling CCM access and accepting "
+                        "the ESA-User licence and CCM Data Access Restrictions."
+                    )
                 raise DemDownloaderException(
-                    "CDSE refused the download (403 DAT-ZIP-608: Access forbidden).\n\n"
-                    "To download Copernicus Contributing Missions (CCM) data, users must "
-                    "update their Copernicus Data Space Ecosystem (CDSE) user profile by:\n"
-                    '- enabling the option "I am also interested in accessing Copernicus '
-                    'Contributing Missions data";\n'
-                    '- ticking "Accept ESA-User license for the use of CCM data and CCM '
-                    'Data Access Restrictions".'
+                    f"CDSE refused the download of {dem} (HTTP 403): {error_body or response.text}"
                 )
 
-            raise DemDownloaderException(
-                f"CDSE refused the download of {dem} (HTTP 403): {error_body or response.text}"
-            )
+            response.raise_for_status()
+            os.makedirs(self.dem_directory, exist_ok=True)
+            file_string_name = os.path.join(self.dem_directory, f"{dem}.zip")
 
-        if not os.path.exists(self.dem_directory):
-            log.warning("%s does not exist and it will be created", self.dem_directory)
-            os.makedirs(self.dem_directory)
+            with open(file_string_name, "wb") as file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        file.write(chunk)
 
-        file_string_name = f"{self.dem_directory}/{dem}.zip"
-        with open(f"{self.dem_directory}/{dem}.zip", "wb") as file:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    file.write(chunk)
-
-        file.close()
         log.info("File %s downloaded", dem)
 
         try:
             self.open_compressed_file(file_string_name, dem)
-        except:
-            log.warning("Error in extracting the DEM file from the zip file, skipping")
-
-        return
+        except Exception as error:
+            log.warning("Error extracting DEM %s: %s", dem, error)
 
     @staticmethod
     def clean_multipolygon(polygon_raw):
@@ -295,28 +286,27 @@ class DemDownloader:
                 f"{self.aux_directory}, then retry."
             ) from download_error
 
-    def retrieve_multipolygon(self, sentinel_2_tile, tile_id):
-
-        with open(sentinel_2_tile, "r", encoding="utf-8") as f:
+    def load_kml(self, sentinel_2_tile):
+        with open(sentinel_2_tile, "rb") as f:
             root = parser.parse(f).getroot()
+        self.kml_placemarks = {str(place.name): place for place in root.Document.Folder.Placemark}
+        log.info("Indexed %s Sentinel-2 tiles", len(self.kml_placemarks))
 
-        for place in root.Document.Folder.Placemark:
-            tile = place.name
-            if tile == tile_id:
-                log.info("Tile_ID: %s", tile_id)
-                temp_1 = place.description.text.split("LL_WKT")[1]
-                temp_2 = temp_1.split('<font COLOR="#008000">')[1]
-                tile_geometry = temp_2.split("</font>")[0]
-                log.info("Tile Found")
-                break
-        f.close()
-
+    def retrieve_multipolygon(self, sentinel_2_tile, tile_id):
+        place = self.kml_placemarks.get(tile_id)
+        if place is None:
+            log.warning("Multipolygon: Tile %s not found", tile_id)
+            return False
         try:
+            temp_1 = place.description.text.split("LL_WKT")[1]
+            temp_2 = temp_1.split('<font COLOR="#008000">')[1]
+            tile_geometry = temp_2.split("</font>")[0]
             self.antimeridian_status = self.is_antimeridian(tile_geometry)
             self.polygon = self.clean_multipolygon(tile_geometry)
+            log.info("Tile_ID: %s found", tile_id)
             return self.polygon
-        except:
-            log.warning("Multipolygon: Tile not found, check if the spelling is correct")
+        except (AttributeError, IndexError, ValueError) as error:
+            log.warning("Cannot parse geometry for tile %s: %s", tile_id, error)
             return False
 
     def create_url(self):
@@ -331,19 +321,21 @@ class DemDownloader:
 
         return url
 
-    @staticmethod
-    def retrieve_dem_list(url_path):
+    def retrieve_dem_list(self, url_path):
+        if url_path in self.catalogue_cache:
+            log.info("Using cached DEM catalogue results")
+            return self.catalogue_cache[url_path]
 
-        json_dict = requests.get(url_path, timeout=(30.0, 20.0)).json()
         try:
-            if json_dict["value"]:
-                log.info("DEM_LIST from url retrieved")
-                df_dem_list = pd.DataFrame.from_dict(json_dict["value"])
-                return df_dem_list["Id"].tolist()
-            else:
-                return []
-        except:
-            log.error(json_dict)
+            response = self.session.get(url_path, timeout=(30, 20))
+            response.raise_for_status()
+            json_dict = response.json()
+            dem_ids = [item["Id"] for item in json_dict["value"]]
+            self.catalogue_cache[url_path] = dem_ids
+            log.info("DEM_LIST from url retrieved: %s products", len(dem_ids))
+            return dem_ids
+        except (requests.RequestException, ValueError, KeyError, TypeError) as error:
+            log.error("DEM catalogue request failed: %s", error)
             return 1
 
     def reading_arguments(self, arguments):
@@ -539,6 +531,7 @@ def main(argv: list[str]) -> int:
         dem_downloader.reading_arguments(args)
 
     log.info("Processing %s Tile(s)", len(dem_downloader.tiles_id_list))
+    dem_downloader.load_kml(sentinel2_tiles_list)
 
     # List the Copernicus DEM files present in local dem_downloader.dem_directory (*.tif, *.dt1, *.dt2):
     dem_types = ("Copernicus*DEM.tif", "Copernicus*DEM.dt1", "Copernicus*DEM.dt2")
@@ -558,7 +551,7 @@ def main(argv: list[str]) -> int:
 
     # Use dictionary to construct Dem ids from Copernicus DEM filenames
     # Dem ids are necessary to identify Dem tiles available on CDSE and prevent duplicate downloads
-    dem_id_stored = []
+    dem_id_stored = set()
     if os.path.isfile(dict_filename_dem_id_file):
         with open(dict_filename_dem_id_file, "r", encoding="UTF-8") as json_file:
             try:
@@ -566,7 +559,7 @@ def main(argv: list[str]) -> int:
 
                 for key in dem_files_list:
                     try:
-                        dem_id_stored.append(dem_downloader.dict_filename_dem_id[key])
+                        dem_id_stored.add(dem_downloader.dict_filename_dem_id[key])
                     except:
                         log.warning("No entry found for: %s", key)
 
@@ -599,7 +592,8 @@ def main(argv: list[str]) -> int:
     for tile_id in dem_downloader.tiles_id_list:
 
         log.info("<----------------------------------------------------------------------->")
-        dem_downloader.retrieve_multipolygon(sentinel2_tiles_list, tile_id)
+        if not dem_downloader.retrieve_multipolygon(sentinel2_tiles_list, tile_id):
+            continue
 
         required_polygons = []
         if dem_downloader.antimeridian_status:
@@ -631,32 +625,25 @@ def main(argv: list[str]) -> int:
                 for counter, dem_id in enumerate(dem_list):
                     log.info("Processing file n %s", counter + 1)
 
-                    if (datetime.datetime.now() - token_time) < datetime.timedelta(seconds=600):
-                        log.info("Token is still valid, within its 10 minutes period")
-                    elif (datetime.datetime.now() - start_time) < datetime.timedelta(seconds=3600):
+                    # Refresh before access-token expiry; create a new login session before the 60-minute refresh limit.
+                    if (datetime.datetime.now() - token_time) >= datetime.timedelta(minutes=9):
                         try:
-                            access_token, refresh_token = dem_downloader.refresh_access_token(
-                                refresh_token
-                            )
-                        except:
-                            log.error("Error when refreshing access token")
-                            log.warning("Process will stop")
+                            if (datetime.datetime.now() - start_time) >= datetime.timedelta(minutes=55):
+                                access_token, refresh_token = dem_downloader.get_access_token(dem_downloader.username, dem_downloader.password)
+                                start_time = datetime.datetime.now()
+                                log.info("New CDSE authentication session created")
+                            else:
+                                try:
+                                    access_token, refresh_token = dem_downloader.refresh_access_token(refresh_token)
+                                    log.info("CDSE access token refreshed")
+                                except DemDownloaderException:
+                                    log.warning("Token refresh failed; creating a new authentication session")
+                                    access_token, refresh_token = dem_downloader.get_access_token(dem_downloader.username, dem_downloader.password)
+                                    start_time = datetime.datetime.now()
+                            token_time = datetime.datetime.now()
+                        except (requests.RequestException, DemDownloaderException) as error:
+                            log.error("CDSE authentication failed: %s", error)
                             return 1
-
-                        token_time = datetime.datetime.now()
-                        log.warning("Token was refreshed for 10 minutes")
-                    else:
-                        # Save dictionary name:id to a JSON file
-                        dict_filename_dem_id_file = os.path.join(
-                            dem_downloader.aux_directory, dem_downloader.dict_filename_dem_id_file
-                        )
-                        with open(dict_filename_dem_id_file, "w", encoding="UTF-8") as json_file:
-                            json.dump(dem_downloader.dict_filename_dem_id, json_file)
-                        log.info("Dictionary name:id saved to JSON file")
-                        log.warning("60 minutes token duration is expired")
-                        log.warning("Process will stop")
-
-                        return 0
 
                     if dem_id in dem_downloader.processed_dem_id_file:
                         log.warning("File %s was already processed from an adjacent tile", dem_id)
@@ -702,6 +689,7 @@ def main(argv: list[str]) -> int:
                 json.dump(dem_downloader.dict_filename_dem_id, json_file)
             log.info("Dictionary name:id saved to JSON file")
 
+    dem_downloader.session.close()
     log.info("Process is finished")
     return 0
 
