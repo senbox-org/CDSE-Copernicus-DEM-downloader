@@ -3,7 +3,6 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
-  - pandas=2.2.2
   - regex=2024.5.15
   - requests=2.32.3
   - rsa=4.9

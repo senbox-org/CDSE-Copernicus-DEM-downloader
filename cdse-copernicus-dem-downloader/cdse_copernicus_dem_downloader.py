@@ -20,6 +20,7 @@
 
 # Built-in Python modules
 import argparse
+import atexit
 import datetime
 import glob
 import json
@@ -32,7 +33,6 @@ from zipfile import ZipFile
 
 # Python modules from additional packages
 import antimeridian as am
-import pandas as pd
 import regex as re
 import requests
 import shapely.wkt as wkt
@@ -40,8 +40,10 @@ from colorlog import ColoredFormatter
 from credentials.credentials import Credentials
 from lxml import objectify
 from pykml import parser
+from requests.adapters import HTTPAdapter
 from requests.exceptions import HTTPError
 from shapely.geometry import Polygon
+from urllib3.util.retry import Retry
 
 # Set up the logging
 LOG_LEVEL = logging.INFO
@@ -102,6 +104,8 @@ class DemDownloader:
         self.processed_dem_id_file = set()
         self.kml_placemarks = {}
         self.session = requests.Session()
+        retry = Retry(total=5, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
         self.catalogue_cache = {}
         self.dict_filename_dem_id_file = "dict_filename_dem_id.json"
         self.dict_filename_dem_id = {}
@@ -167,27 +171,32 @@ class DemDownloader:
 
     def open_compressed_file(self, dem_file, dem_id):
 
-        with ZipFile(dem_file) as zip_object:
-            for member in zip_object.namelist():
-                if re.match(r".*DEM.tif$", member) or re.match(r".*DEM.dt[12]$", member):
-                    filename = os.path.basename(member)
-                    # skip directories
-                    if not filename:
-                        continue
-                    # copy file (taken from zipfile's extract)
-                    source = zip_object.open(member)
-                    target = open(os.path.join(self.dem_directory, filename), "wb")
-                    with source, target:
-                        shutil.copyfileobj(source, target)
-                        log.info("DEM %s extracted and stored", filename)
-                        self.processed_dem_id_file.add(dem_id)
-                        self.dict_filename_dem_id[filename] = dem_id
         try:
-            os.remove(dem_file)
-        except:
-            pass
+            with ZipFile(dem_file) as zip_object:
+                for member in zip_object.namelist():
+                    if re.match(r".*DEM.tif$", member) or re.match(r".*DEM.dt[12]$", member):
+                        filename = os.path.basename(member)
+                        # skip directories
+                        if not filename:
+                            continue
+                        # copy file (taken from zipfile's extract)
+                        source = zip_object.open(member)
+                        target = open(os.path.join(self.dem_directory, filename), "wb")
+                        with source, target:
+                            shutil.copyfileobj(source, target)
+                            log.info("DEM %s extracted and stored", filename)
+                            self.processed_dem_id_file.add(dem_id)
+                            self.dict_filename_dem_id[filename] = dem_id
+        finally:
+            # also remove the zip when extraction fails, so no stale archive is left behind
+            pathlib.Path(dem_file).unlink(missing_ok=True)
 
-        return
+    def save_dict(self):
+        """Save dictionary name:id to a JSON file."""
+        path = os.path.join(self.aux_directory, self.dict_filename_dem_id_file)
+        with open(path, "w", encoding="UTF-8") as json_file:
+            json.dump(self.dict_filename_dem_id, json_file)
+        log.info("Dictionary name:id saved to JSON file")
 
     def downloading_dem(self, dem, access_token):
         dwn_url = f"https://zipper.dataspace.copernicus.eu/odata/v1/Products({dem})/$value"
@@ -214,10 +223,16 @@ class DemDownloader:
             os.makedirs(self.dem_directory, exist_ok=True)
             file_string_name = os.path.join(self.dem_directory, f"{dem}.zip")
 
-            with open(file_string_name, "wb") as file:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        file.write(chunk)
+            part_name = f"{file_string_name}.part"
+            try:
+                with open(part_name, "wb") as file:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            file.write(chunk)
+                os.replace(part_name, file_string_name)
+            except BaseException:
+                pathlib.Path(part_name).unlink(missing_ok=True)
+                raise
 
         log.info("File %s downloaded", dem)
 
@@ -292,7 +307,7 @@ class DemDownloader:
         self.kml_placemarks = {str(place.name): place for place in root.Document.Folder.Placemark}
         log.info("Indexed %s Sentinel-2 tiles", len(self.kml_placemarks))
 
-    def retrieve_multipolygon(self, sentinel_2_tile, tile_id):
+    def retrieve_multipolygon(self, tile_id):
         place = self.kml_placemarks.get(tile_id)
         if place is None:
             log.warning("Multipolygon: Tile %s not found", tile_id)
@@ -335,8 +350,7 @@ class DemDownloader:
             log.info("DEM_LIST from url retrieved: %s products", len(dem_ids))
             return dem_ids
         except (requests.RequestException, ValueError, KeyError, TypeError) as error:
-            log.error("DEM catalogue request failed: %s", error)
-            return 1
+            raise DemDownloaderException(f"DEM catalogue request failed: {error}") from error
 
     def reading_arguments(self, arguments):
 
@@ -560,11 +574,14 @@ def main(argv: list[str]) -> int:
                 for key in dem_files_list:
                     try:
                         dem_id_stored.add(dem_downloader.dict_filename_dem_id[key])
-                    except:
+                    except KeyError:
                         log.warning("No entry found for: %s", key)
 
-            except:
+            except (ValueError, OSError):
                 log.warning("Error reading dictionary file: %s", dict_filename_dem_id_file)
+
+    # keep the name:id mapping on every exit path (errors, auth failure, ...)
+    atexit.register(dem_downloader.save_dict)
 
     log.info("Getting access token")
     try:
@@ -589,10 +606,12 @@ def main(argv: list[str]) -> int:
     token_time = start_time
     log.info("Start time: %s", start_time)
 
+    skipped_tiles = []
     for tile_id in dem_downloader.tiles_id_list:
 
         log.info("<----------------------------------------------------------------------->")
-        if not dem_downloader.retrieve_multipolygon(sentinel2_tiles_list, tile_id):
+        if not dem_downloader.retrieve_multipolygon(tile_id):
+            skipped_tiles.append(tile_id)
             continue
 
         required_polygons = []
@@ -613,10 +632,11 @@ def main(argv: list[str]) -> int:
         for polygon in required_polygons:
             dem_downloader.polygon = polygon
             url = dem_downloader.create_url()
-            dem_list = dem_downloader.retrieve_dem_list(url)
-
-            if dem_list == 1:
-                log.error("Error in the request for %s. %s will be skipped", tile_id, tile_id)
+            try:
+                dem_list = dem_downloader.retrieve_dem_list(url)
+            except DemDownloaderException as error:
+                log.error("%s. %s will be skipped", error, tile_id)
+                skipped_tiles.append(tile_id)
                 continue
 
             if dem_list:
@@ -682,14 +702,12 @@ def main(argv: list[str]) -> int:
                 log.warning("NO DEM available for Tile %s", tile_id)
 
             # Save dictionary name:id to a JSON file (after each tile processed)
-            dict_filename_dem_id_file = os.path.join(
-                dem_downloader.aux_directory, dem_downloader.dict_filename_dem_id_file
-            )
-            with open(dict_filename_dem_id_file, "w", encoding="UTF-8") as json_file:
-                json.dump(dem_downloader.dict_filename_dem_id, json_file)
-            log.info("Dictionary name:id saved to JSON file")
+            dem_downloader.save_dict()
 
     dem_downloader.session.close()
+    if skipped_tiles:
+        log.error("Process finished with %s skipped tile(s): %s", len(skipped_tiles), skipped_tiles)
+        return 1
     log.info("Process is finished")
     return 0
 
